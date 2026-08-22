@@ -1,13 +1,16 @@
 # AGENTS.md
 
 ## Developer Commands
-- Build: `go build -o stui stui.go`
-- Run: `go run stui.go`
+- Build: `cargo build` (Release: `cargo build --release`)
+- Run: `cargo run` (e.g. `cargo run -- -q`)
+- Test: `cargo test`
 
 ## Architecture & Conventions
-- TUI framework: Bubble Tea (`charm.land/bubbletea/v2`).
-- Configuration: Games list is managed in `~/.config/stui/games.json`.
+- Language: Rust (2021 edition)
+- TUI framework: Ratatui (`ratatui`) + Crossterm (`crossterm`)
+- CLI Parser: Clap (`clap`)
+- Serialization: Serde (`serde`, `serde_json`)
+- Configuration: Managed in `~/.config/stui/games.json` and `~/.config/stui/state.json`.
+- Game scanning: Scans `~/.local/share/Steam/steamapps/*.acf` and reads playtimes / persona state from `~/.local/share/Steam/userdata/<user>/config/localconfig.vdf`.
 - Launches games using `steam` command with `steam://rungameid/<ID>`.
 
-## Known Issues
-- `ScanSteamGames()` is called in `rescanGames()` but is not defined in the codebase.
