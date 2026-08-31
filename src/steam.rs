@@ -202,28 +202,76 @@ pub fn parse_acf_file(content: &str) -> Option<(String, String)> {
     Some((id_match[1].to_string(), name_match[1].to_string()))
 }
 
+pub fn parse_library_folders_from_vdf(content: &str) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    let re = Regex::new(r#""path"\s+"([^"]+)""#).unwrap();
+
+    for cap in re.captures_iter(content) {
+        if let Some(m) = cap.get(1) {
+            let path_str = m.as_str().replace(r#"\\"#, "/");
+            let steamapps_path = PathBuf::from(path_str).join("steamapps");
+            if !folders.contains(&steamapps_path) {
+                folders.push(steamapps_path);
+            }
+        }
+    }
+
+    folders
+}
+
+pub fn get_steam_library_folders() -> Vec<PathBuf> {
+    let mut library_dirs = Vec::new();
+
+    if let Some(default_steamapps) = get_steam_steamapps_dir() {
+        if default_steamapps.exists() {
+            library_dirs.push(default_steamapps.clone());
+        }
+
+        let libraryfolders_vdf = default_steamapps.join("libraryfolders.vdf");
+        if let Ok(content) = fs::read_to_string(libraryfolders_vdf) {
+            for folder in parse_library_folders_from_vdf(&content) {
+                if folder.exists() && !library_dirs.contains(&folder) {
+                    library_dirs.push(folder);
+                }
+            }
+        }
+    }
+
+    library_dirs
+}
+
 pub fn scan_steam_games() -> Result<Vec<Game>, Box<dyn std::error::Error>> {
-    let steamapps_dir = match get_steam_steamapps_dir() {
-        Some(dir) if dir.exists() => dir,
-        _ => return Err("Steam steamapps directory not found".into()),
-    };
+    let library_dirs = get_steam_library_folders();
+    if library_dirs.is_empty() {
+        return Err("No Steam library directories found".into());
+    }
 
     let playtimes = get_playtimes_map().unwrap_or_default();
     let mut games = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
 
-    for entry in fs::read_dir(steamapps_dir)?.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("acf") {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Some((id, name)) = parse_acf_file(&content) {
-                    let playtime = playtimes.get(&id).copied().unwrap_or(0);
-                    games.push(Game {
-                        id,
-                        name,
-                        hidden: false,
-                        playtime,
-                        favorite: false,
-                    });
+    for steamapps_dir in library_dirs {
+        let entries = match fs::read_dir(steamapps_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("acf") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Some((id, name)) = parse_acf_file(&content) {
+                        if seen_ids.insert(id.clone()) {
+                            let playtime = playtimes.get(&id).copied().unwrap_or(0);
+                            games.push(Game {
+                                id,
+                                name,
+                                hidden: false,
+                                playtime,
+                                favorite: false,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -397,5 +445,36 @@ mod tests {
         assert_eq!(merged[1].id, "1113000");
         assert!(!merged[1].hidden);
         assert!(!merged[1].favorite);
+    }
+
+    #[test]
+    fn test_parse_library_folders_from_vdf() {
+        let sample_vdf = r#"
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"/home/tomer/.local/share/Steam"
+		"label"		""
+		"mounted"		"1"
+	}
+	"1"
+	{
+		"path"		"/mnt/secondary_drive/SteamLibrary"
+		"label"		"SSD"
+		"mounted"		"1"
+	}
+}
+"#;
+        let folders = parse_library_folders_from_vdf(sample_vdf);
+        assert_eq!(folders.len(), 2);
+        assert_eq!(
+            folders[0],
+            PathBuf::from("/home/tomer/.local/share/Steam/steamapps")
+        );
+        assert_eq!(
+            folders[1],
+            PathBuf::from("/mnt/secondary_drive/SteamLibrary/steamapps")
+        );
     }
 }
